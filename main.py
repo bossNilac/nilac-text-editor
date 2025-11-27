@@ -1,50 +1,64 @@
-import configparser  # your module
-import sys
+# This file contains the high-level control flow of the editor.
+# It manages rendering, hotkeys, file I/O, and interaction with buffer_op,
+# which handles the actual text buffer and cursor state.
+
+import configparser
 import time
 
 import keyboard
 
 import buffer_op
-from buffer_op import clear_screen, move_cursor  # (optional; or just use buffer_op.clear_screen)
+from buffer_op import clear_screen, move_cursor
 
-
+# Keys that produce characters vs keys that move the cursor.
+# These sets help the editor decide whether a key inserts text or navigates.
 functional_keys_text = {"space", "backspace", "enter"}
-functional_keys_cursor = {"up", "down", "left", "right"}
+functional_keys_cursor = {"up", "down", "left", "right", "home", "end", "page up", "page down"}
 
+# Path of the currently opened file (None when unsaved).
 file_name = None
 status = None
+
+# Editor reads/writes the most recently opened file to editor.ini.
 config_parser = configparser.ConfigParser()
 
-HIGHLIGHT_START = "\033[43m"  # yellow background
-HIGHLIGHT_END   = "\033[0m"   # reset
+# ANSI escape sequences used to highlight matches during search mode.
+HIGHLIGHT_START = "\033[43m"   # yellow background
+HIGHLIGHT_END   = "\033[0m"
+
+# When True, render() shows highlighted search results.
 search_mode = False
 
 
-
 def print_buffer():
+    """
+    Draw the portion of the buffer currently visible in the viewport.
+    This editor only renders what fits on screen to keep things fast
+    and avoid flickering.
+    """
     start = buffer_op.get_top_line()
     end = min(start + buffer_op.get_max_line(), len(buffer_op.buffer))
 
-    from_col = buffer_op.get_left_col()          # first visible column
-    to_col = buffer_op.get_left_col() + buffer_op.get_max_col()  # one past last visible column
+    from_col = buffer_op.get_left_col()
+    to_col = from_col + buffer_op.get_max_col()
 
-    # print only visible lines
+    # Render each visible line, cropped horizontally
     for i in range(start, end):
-        # join the whole logical line
-        full_line = ""
-        for ch in buffer_op.buffer[i]:
-            full_line += ch
-
-        # take only the visible slice
+        full_line = "".join(buffer_op.buffer[i])
         visible = full_line[from_col:to_col]
         print(visible)
 
-    # fill remaining screen lines with blanks
+    # Print blank lines to fill the screen if buffer is shorter
     for _ in range(end, start + buffer_op.get_max_line()):
         print("")
 
 
 def render():
+    """
+    Clear the screen and redraw the entire editor UI.
+    This includes the text viewport, status bar, and moving
+    the cursor to its correct terminal position.
+    """
     global file_name, status, search_mode
     clear_screen()
 
@@ -53,26 +67,27 @@ def render():
     else:
         print_buffer()
 
-    if file_name is None:
-        display_name = "No Name"
-    else:
-        display_name = file_name
+    display_name = file_name if file_name else "No Name"
 
     print(
-        "-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d Ctrl+O Open Ctrl+S Save Ctrl+Q Quit"
-        % (status, display_name, buffer_op.row, buffer_op.col)
+        "-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d "
+        "Ctrl+O Open Ctrl+S Save Ctrl+Q Quit" %
+        (status, display_name, buffer_op.row, buffer_op.col)
     )
+
+    # Restore terminal cursor to logical editor cursor.
     move_cursor()
 
 
 def render_line(row_index, chars, from_col):
     """
-    row_index = original row number in buffer
-    chars     = list of chars for this line (ALREADY sliced to visible region)
-    from_col  = the global column offset (needed to adjust match positions)
-    """
+    Helper used only when the editor is in search mode.
+    Draws a single line with highlighted matches.
 
-    # find matches on this row
+    row_index: index in the real buffer
+    chars: visible portion of that row
+    from_col: starting column of the viewport (to adjust highlighting)
+    """
     line_matches = [(s, e) for (row, s, e) in buffer_op.matches if row == row_index]
 
     if not line_matches:
@@ -82,33 +97,30 @@ def render_line(row_index, chars, from_col):
     line = ""
     i = 0
 
+    # Apply highlighting around matched segments
     for (start, end) in sorted(line_matches):
-        # Shift match positions into the visible window
         local_start = start - from_col
         local_end   = end   - from_col
 
-        # Skip if the match is completely outside visible area
         if local_end <= 0 or local_start >= len(chars):
-            continue
+            continue  # totally outside the viewport
 
-        # Clamp visible region to window
         local_start = max(0, local_start)
-        local_end = min(len(chars), local_end)
+        local_end   = min(len(chars), local_end)
 
-        # normal text before highlighted region
         line += "".join(chars[i:local_start])
-
-        # highlighted region
         line += HIGHLIGHT_START + "".join(chars[local_start:local_end]) + HIGHLIGHT_END
-
         i = local_end
 
-    # rest of the line
     line += "".join(chars[i:])
     print(line)
 
 
 def print_search_buffer():
+    """
+    Like print_buffer(), but uses render_line() so that
+    matched search results appear highlighted.
+    """
     start = buffer_op.get_top_line()
     end = min(start + buffer_op.get_max_line(), len(buffer_op.buffer))
 
@@ -116,31 +128,36 @@ def print_search_buffer():
     to_col = from_col + buffer_op.get_max_col()
 
     for row in range(start, end):
-        full_line = buffer_op.buffer[row]
-        # slice the visible window
-        visible_chars = full_line[from_col:to_col]
-        render_line(row, visible_chars, from_col)
+        visible = buffer_op.buffer[row][from_col:to_col]
+        render_line(row, visible, from_col)
 
 
 def render_search():
-    global file_name,status
+    """
+    Separate rendering path specifically used during replace-all
+    operations or search mode. Keeps UI consistent.
+    """
+    global file_name, status
     clear_screen()
     print_search_buffer()
-    if file_name is None:
-        display_name = "No Name"
-    else:
-        display_name = file_name
+
+    display_name = file_name if file_name else "No Name"
+
     print(
-        """-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d Ctrl+O Open Ctrl+S Save Ctrl+Q Quit
-             Ctrl+Z Undo Ctrl+Y Redo Ctrl+/ Search Ctrl+R Replace Ctrl+left/right fast move"""
-        % (status, display_name, buffer_op.row, buffer_op.col)
+        "-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d "
+        "Ctrl+O Open Ctrl+S Save Ctrl+Q Quit\n"
+        "Ctrl+Z Undo Ctrl+Y Redo Ctrl+/ Search Ctrl+R Replace Ctrl+Left/Right word jump" %
+        (status, display_name, buffer_op.row, buffer_op.col)
     )
     move_cursor()
 
 
 def load_config():
-    """Load last opened file path from editor.ini and open it."""
-    global file_name, config_parser,status
+    """
+    On startup, try to restore the last opened file.
+    If the ini file doesn’t exist or is corrupt, just start empty.
+    """
+    global file_name, config_parser, status
     try:
         config_parser.read("editor.ini")
         path = config_parser.get("editor", "path")
@@ -155,25 +172,29 @@ def load_config():
 
 
 def save_config():
-    """Save current file path into editor.ini."""
+    """
+    Writes the currently opened file path to editor.ini.
+    Nothing fancy, just a single key.
+    """
     global file_name, config_parser
     if file_name is None:
         return
 
-    # keep it simple: single [editor] section with path
-    config_parser['editor'] = {"path": file_name}
+    config_parser["editor"] = {"path": file_name}
 
     with open("editor.ini", "w") as configfile:
         config_parser.write(configfile)
 
 
 def open_file():
-    """Prompt for a file path and load it into the buffer."""
+    """
+    Prompt user for a path and attempt to load it.
+    This intentionally loops until a valid file is entered.
+    """
     global file_name, status
     while True:
         path = input("Enter file path: ")
         try:
-            # just try to open and close to verify
             with open(path, "r"):
                 pass
             break
@@ -187,7 +208,11 @@ def open_file():
 
 
 def save_file():
-    global file_name,status
+    """
+    Save the current buffer back to disk.
+    If the user hasn't chosen a name yet, prompt for one.
+    """
+    global file_name, status
 
     if file_name is None:
         clear_screen()
@@ -199,17 +224,32 @@ def save_file():
 
     status = "SAVED"
 
+
 def fix_ui():
+    """
+    Small hack: after reading a key event, the terminal can
+    get out of sync visually. Sending ESC cleans up the state.
+    """
     time.sleep(0.5)
-    keyboard.send('esc')
+    keyboard.send("esc")
+
 
 def search_dialogue():
+    """
+    Ask user for a search string, switch into search mode, and highlight
+    all matches immediately.
+    """
     global search_mode
     search_string = input("Enter search criteria: ")
     search_mode = True
     buffer_op.search_all(search_string)
 
+
 def replace_all_dialogue():
+    """
+    Full replace-all flow: prompt for search and replace terms,
+    apply the operation (with undo support), and refresh highlights.
+    """
     global search_mode
 
     search_string = input("Find: ")
@@ -221,82 +261,91 @@ def replace_all_dialogue():
         "replace": replace_string,
     }
     buffer_op.apply_op(op, record_history=True)
-    # optional: run search again for the replacement text, or just exit search mode
-    buffer_op.search_all(replace_string)  # if you want to highlight new text
-    search_mode = True  # or False if you want to leave search mode
+
+    # Optionally highlight the new text
+    buffer_op.search_all(replace_string)
+    search_mode = True
 
 
 def main():
+    """
+    Core event loop of the editor.
+    Reads keyboard events, handles hotkeys, and delegates
+    all buffer modifications to buffer_op.
+    """
     load_config()
     render()
+
     global status, search_mode
+
     while True:
         try:
             render()
             key = keyboard.read_event()
 
-            # ignore key releases for hotkeys as well
+            # Ignore key releases for cleaner input handling
             if key.event_type == keyboard.KEY_UP:
                 continue
 
-            if key.name == 'esc':
-                if search_mode:
-                    buffer_op.matches.clear()
-                    search_mode = False
-                    render()
-                    continue
+            # Exit search mode with ESC
+            if key.name == "esc" and search_mode:
+                buffer_op.matches.clear()
+                search_mode = False
+                render()
+                continue
 
-            if keyboard.is_pressed('ctrl'):
-                if key.name == 'o':
+            # Handle Ctrl hotkeys
+            if keyboard.is_pressed("ctrl"):
+                if key.name == "o":
                     clear_screen()
                     fix_ui()
                     open_file()
-                    render()
                     continue
-                elif key.name == 's':
+
+                elif key.name == "s":
                     save_file()
                     fix_ui()
-                    render()
                     continue
-                elif key.name == 'q':
+
+                elif key.name == "q":
                     clear_screen()
                     fix_ui()
                     save_file()
                     save_config()
                     return
-                elif key.name == 'z':
+
+                elif key.name == "z":
                     buffer_op.undo()
-                    render()
                     continue
-                elif key.name == 'y':
+
+                elif key.name == "y":
                     buffer_op.redo()
-                    render()
                     continue
-                elif key.name == '/':
+
+                elif key.name == "/":
                     clear_screen()
                     fix_ui()
                     search_dialogue()
-                    render()
                     continue
-                elif key.name == 'r':
+
+                elif key.name == "r":
                     clear_screen()
                     fix_ui()
                     replace_all_dialogue()
-                    render()
                     continue
 
-            if key.name == 'ctrl' or key.name == 'shift':
+            if key.name in {"ctrl", "shift"}:
                 continue
 
-            # otherwise, normal editor keys:
+            # Normal typing → send to buffer_op
             buffer_op.record_key(key)
             status = "UNSAVED"
-            render()
 
         except KeyboardInterrupt:
             print("history", buffer_op.history)
             print("buffer", buffer_op.buffer)
             break
+
 
 if __name__ == "__main__":
     clear_screen()

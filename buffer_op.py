@@ -1,30 +1,44 @@
+# buffer_op.py
+# This module contains all the low-level text-editing logic:
+# the cursor, viewport scrolling, undo/redo system, and operations
+# like splitting lines, joining lines, and replacing text.
+#
+# main.py handles UI, while this file handles the "guts" of the editor.
+
 import keyboard
 import os
 import sys
 
+# Keys that insert text vs keys that move the cursor.
 functional_keys_text = {"space", "backspace", "enter"}
 functional_keys_cursor = {"up", "down", "left", "right"}
 
+# Keeps a simple log of raw key events (mostly for debugging).
 history = []
 
+# The text buffer. Represented as a list of lines, where each line is a list of chars.
 buffer = [[]]
+
+# Logical cursor position in the buffer.
 row = 0
 col = 0
 
-
+# Viewport scrolling offsets.
 top_line = 0
 MAX_LINE = 24
 
-left_col = 0       # first visible column
-MAX_COL = 120       # how many columns you want to show (tweak to your terminal)
+left_col = 0
+MAX_COL = 120
 
+# Undo/redo stacks storing operations dictionaries.
 undo_stack = []
 redo_stack = []
 
+# List of (row, start, end) tuples marking search matches.
 matches = []
 
 
-
+# ---- Basic state getters used by main.py ----
 
 def get_top_line():
     return top_line
@@ -40,72 +54,58 @@ def get_max_col():
 
 
 def remove_char_from_buffer(row_, col_):
-    # remove the character AT index col_ in line row_
+    """
+    Safely remove a character from a specific position in the buffer.
+    This helper exists because many edits need the same logic,
+    and manually slicing lists everywhere gets messy.
+    """
     size = len(buffer[row_])
-    if col_ < 0 or col_ >= size:   # <<< prevent out-of-range
+    if col_ < 0 or col_ >= size:
         return
-    temp_line = []
+
+    temp = []
     for i in range(size):
         if i != col_:
-            temp_line.append(buffer[row_][i])
-    buffer[row_] = temp_line
+            temp.append(buffer[row_][i])
+
+    buffer[row_] = temp
 
 
 def move_cursor():
-    # map logical (row, col) to screen coordinates using scrolling
-    screen_row = row - top_line       # 0-based
-    screen_col = col - left_col       # 0-based
+    """
+    Convert logical cursor coordinates (row, col) into terminal coordinates,
+    considering scroll offsets, and move the real terminal cursor there.
+    """
+    screen_row = row - top_line
+    screen_col = col - left_col
 
-    # clamp vertically
-    if screen_row < 0:
-        screen_row = 0
-    if screen_row >= MAX_LINE:
-        screen_row = MAX_LINE - 1
-
-    # clamp horizontally
-    if screen_col < 0:
-        screen_col = 0
-    if screen_col >= MAX_COL:
-        screen_col = MAX_COL - 1
+    screen_row = max(0, min(screen_row, MAX_LINE - 1))
+    screen_col = max(0, min(screen_col, MAX_COL - 1))
 
     sys.stdout.write("\033[%d;%dH" % (screen_row + 1, screen_col + 1))
     sys.stdout.flush()
 
 
-
-def handle_end_line(key):
-    # this function will almost never fire with your huge x_limit,
-    # but we'll keep it mostly as you had it
-    increase_y()
-    global col
-    col = 0
-    print(row, col)
-    if row > len(buffer) - 1:
-        buffer.append([])
-
-    if key.name == "space":
-        buffer[row].append(" ")
-    else:
-        append_key(key)
-
 def ensure_cursor_in_bounds():
-    """Keep (row, col) valid inside the buffer."""
+    """
+    After any edit, make sure row/col are still valid.
+    Prevents cursor from drifting outside its line length.
+    """
     global row, col
 
-    # clamp row
-    if row < 0:
-        row = 0
-    if row >= len(buffer):
-        row = len(buffer) - 1
-
-    # clamp col to line length
+    row = max(0, min(row, len(buffer) - 1))
     line_len = len(buffer[row])
+
     if col < 0:
         col = 0
     if col > line_len:
         col = line_len
 
+
 def adjust_top_line():
+    """
+    Scroll the viewport vertically so the cursor stays visible.
+    """
     global top_line
 
     if len(buffer) <= MAX_LINE:
@@ -117,272 +117,209 @@ def adjust_top_line():
     elif row > top_line + MAX_LINE - 1:
         top_line = row - (MAX_LINE - 1)
 
-    # clamp
-    max_top = len(buffer) - MAX_LINE
-    if top_line < 0:
-        top_line = 0
-    if top_line > max_top:
-        top_line = max_top
+    top_line = max(0, min(top_line, len(buffer) - MAX_LINE))
+
 
 def adjust_left_col():
+    """
+    Horizontal scrolling. Ensures that long lines are viewable
+    and the cursor doesn't disappear off-screen horizontally.
+    """
     global left_col
 
     line_len = len(buffer[row])
-
-    # If line fits entirely in the window, always show from the start
     if line_len <= MAX_COL:
         left_col = 0
         return
 
-    # If cursor is left of the window, scroll left
     if col < left_col:
         left_col = col
-
-    # If cursor is right of the window, scroll right
     elif col >= left_col + MAX_COL:
         left_col = col - MAX_COL + 1
 
-    # Don't let the window start beyond the last possible position
-    max_left = max(0, line_len - MAX_COL)
-    if left_col > max_left:
-        left_col = max_left
-
-    if left_col < 0:
-        left_col = 0
-
+    left_col = max(0, min(left_col, line_len - MAX_COL))
 
 
 def handle_arrow_keys(key):
+    """
+    Arrow key navigation with sensible behavior across line boundaries.
+    """
     global col, row
 
     if key.name == "up":
-        # don't let row go below 0
-        if row > 0:               # <<< fixed condition
-            row -= 1              # <<< use row-1
-            # clamp col to line length
-            if col > len(buffer[row]):   # <<< keep col valid
-                col = len(buffer[row])
+        if row > 0:
+            row -= 1
+            col = min(col, len(buffer[row]))
 
     elif key.name == "down":
-        # don't go below last line
-        if row < len(buffer) - 1:        # <<< prevent out-of-range
+        if row < len(buffer) - 1:
             row += 1
-            if col > len(buffer[row]):   # <<< clamp col
-                col = len(buffer[row])
-
+            col = min(col, len(buffer[row]))
 
     elif key.name == "left":
         if col > 0:
-            col -= 1                     # <<< simple left move
+            col -= 1
         elif row > 0:
-            # go to end of previous line
-            row -= 1                     # <<< previous line
-            col = len(buffer[row])       # <<< end of that line
+            row -= 1
+            col = len(buffer[row])
 
     elif key.name == "right":
-        line_len = len(buffer[row])      # <<< get line length
+        line_len = len(buffer[row])
         if col < line_len:
-            col += 1                     # move right in same line
+            col += 1
         elif row < len(buffer) - 1:
-            # go to start of next line
             row += 1
             col = 0
+
     ensure_cursor_in_bounds()
     adjust_top_line()
     adjust_left_col()
 
 
 def clear_screen():
+    """Simple wrapper around system CLS/clear."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 
 def append_key(key):
-    # insert at the cursor column, not at the end
+    """Insert a raw character at the cursor position."""
     buffer[row].insert(col, key.name)
 
 
-
-def increase_x():
-    global col
-    col = col + 1
-
-
-def decrease_x():
-    global col
-    col = col - 1
-
-
-def increase_y():
-    global row
-    row = row + 1
-
-
-def decrease_y():
-    global row
-    row = row - 1
-
-
 def record_key(key):
-    global row, col, buffer
+    """
+    Main entry point for all edits.
+    This is where we translate a keyboard event into a mutation
+    of the underlying buffer (with undo history).
+    """
+    global row, col
 
-    # ignore key releases
     if key.event_type == keyboard.KEY_UP:
         return
 
     if key.event_type == keyboard.KEY_DOWN:
         history.append(key.name)
 
-    # cursor movement
+    # Arrow keys and navigation
     if key.name in functional_keys_cursor:
-        handle_arrow_keys(key)
+        if keyboard.is_pressed('ctrl') and key.name == "left":
+            move_word_left()
+        elif keyboard.is_pressed('ctrl') and key.name == "right":
+            move_word_right()
+        elif key.name == "home":
+            go_line_home()
+        elif key.name == "end":
+            go_line_end()
+        elif key.name == "page up":
+            page_up()
+        elif key.name == "page down":
+            page_down()
+        else:
+            handle_arrow_keys(key)
         return
 
-    # --- normal character insert (NOT space, enter, backspace) ---
+    # Normal character input (anything not special)
     if key.event_type == keyboard.KEY_DOWN and key.name not in functional_keys_text:
-        ch = key.name
-        op = {
-            "kind": "insert_char",
-            "row": row,
-            "col": col,
-            "ch": ch,
-        }
+        op = {"kind": "insert_char", "row": row, "col": col, "ch": key.name}
         apply_op(op, record_history=True)
         return
 
-    # --- SPACE ---
-    if key.name.lower() == "space":
-        op = {
-            "kind": "insert_char",
-            "row": row,
-            "col": col,
-            "ch": " ",
-        }
+    # Space
+    if key.name == "space":
+        op = {"kind": "insert_char", "row": row, "col": col, "ch": " "}
         apply_op(op, record_history=True)
         return
 
-    # --- BACKSPACE ---
-    if key.name.lower() == "backspace":
-        # delete character before cursor
+    # Backspace
+    if key.name == "backspace":
         if len(buffer[row]) > 0 and col > 0:
             ch = buffer[row][col - 1]
-            op = {
-                "kind": "delete_char",
-                "row": row,
-                "col": col - 1,
-                "ch": ch,
-            }
+            op = {"kind": "delete_char", "row": row, "col": col - 1, "ch": ch}
             apply_op(op, record_history=True)
 
-        # at start of line: join with previous line
         elif col == 0 and row > 0:
             prev_len = len(buffer[row - 1])
-            curr_line = buffer[row][:]   # copy current line
-
+            curr_line = buffer[row][:]
             op = {
                 "kind": "join_line",
-                "row": row - 1,          # previous line index
-                "col": prev_len,         # join point
+                "row": row - 1,
+                "col": prev_len,
                 "prev_len": prev_len,
                 "curr": curr_line,
             }
             apply_op(op, record_history=True)
-
         return
 
-    # --- ENTER ---
-    if key.name.lower() == "enter":
-        line = buffer[row]
-        right = line[col:][:]   # chars that move to new line
-
-        op = {
-            "kind": "split_line",
-            "row": row,
-            "col": col,
-            "right": right,
-        }
+    # Enter key splits the line
+    if key.name == "enter":
+        right = buffer[row][col:][:]
+        op = {"kind": "split_line", "row": row, "col": col, "right": right}
         apply_op(op, record_history=True)
         return
 
+
 def load_file(path):
+    """
+    Load disk file into buffer.
+    Resets viewport and cursor.
+    """
     global buffer, row, col, top_line, left_col
 
     buffer = []
 
     with open(path, "r") as f:
         for line in f:
-            # strip newline, keep text
-            line = line.rstrip("\n")
-            buffer.append(list(line))
+            buffer.append(list(line.rstrip("\n")))
 
-    # if file is empty, keep one empty line
     if not buffer:
         buffer = [[]]
 
-    # reset cursor and viewport
     row = 0
     col = 0
     top_line = 0
     left_col = 0
 
-    return path  # so main can store it in file_name
+    return path
+
 
 def apply_op(op, record_history=True):
     """
-    op: dict with keys:
-      kind: "insert_char" | "delete_char" | "split_line" | "join_line"
-      row, col
-      ch (for char ops)
-      right (for split_line: list of chars that moved to next line)
-      prev_len, curr (for join_line)
+    General operation dispatcher.
+    Every undoable action comes through here.
     """
-    global row, col, buffer,top_line, left_col
+    global row, col
 
     kind = op["kind"]
 
     if kind == "insert_char":
-        r = op["row"]
-        c = op["col"]
-        ch = op["ch"]
-        buffer[r].insert(c, ch)
-        row = r
-        col = c + 1
+        buffer[op["row"]].insert(op["col"], op["ch"])
+        row = op["row"]
+        col = op["col"] + 1
 
     elif kind == "delete_char":
-        r = op["row"]
-        c = op["col"]
+        r, c = op["row"], op["col"]
         if 0 <= r < len(buffer) and 0 <= c < len(buffer[r]):
             del buffer[r][c]
-        row = r
-        col = c
+        row, col = r, c
 
     elif kind == "split_line":
-        r = op["row"]
-        c = op["col"]
-        right = op["right"]  # list of chars
-
-        line = buffer[r]
-        left = line[:c]
+        r, c = op["row"], op["col"]
+        left = buffer[r][:c]
+        right = op["right"][:]
         buffer[r] = left
-        buffer.insert(r + 1, right[:])  # copy
-
-        row = r + 1
-        col = 0
+        buffer.insert(r + 1, right)
+        row, col = r + 1, 0
 
     elif kind == "join_line":
-        r = op["row"]        # index of previous line
-        join_col = op["col"] # where the join happened
-
+        r = op["row"]
+        join_pos = op["col"]
         if r + 1 < len(buffer):
             buffer[r].extend(buffer[r + 1])
             del buffer[r + 1]
-
-        row = r
-        col = join_col
+        row, col = r, join_pos
 
     elif kind == "replace":
-        search = op["search"]
-        replacement = op["replace"]
-        replace_all(search, replacement)
+        replace_all(op["search"], op["replace"])
 
     ensure_cursor_in_bounds()
     adjust_top_line()
@@ -392,9 +329,12 @@ def apply_op(op, record_history=True):
         undo_stack.append(op)
         redo_stack.clear()
 
-def undo():
-    global row, col
 
+def undo():
+    """
+    Reverse the last edit.
+    Undo logic mirrors apply_op() but in reverse.
+    """
     if not undo_stack:
         return
 
@@ -402,77 +342,62 @@ def undo():
     kind = op["kind"]
 
     if kind == "insert_char":
-        # undo = delete the char we inserted
-        r = op["row"]
-        c = op["col"]
-        if 0 <= r < len(buffer) and 0 <= c < len(buffer[r]):
-            del buffer[r][c]
-        row = r
-        col = c
+        r, c = op["row"], op["col"]
+        del buffer[r][c]
 
     elif kind == "delete_char":
-        # undo = reinsert the deleted char
-        r = op["row"]
-        c = op["col"]
-        ch = op["ch"]
-        buffer[r].insert(c, ch)
-        row = r
-        col = c + 1
+        buffer[op["row"]].insert(op["col"], op["ch"])
 
     elif kind == "split_line":
-        # undo Enter = join lines back
         r = op["row"]
-        if r + 1 < len(buffer):
-            buffer[r].extend(buffer[r + 1])
-            del buffer[r + 1]
-        row = r
-        col = op["col"]
+        buffer[r].extend(buffer[r + 1])
+        del buffer[r + 1]
 
     elif kind == "join_line":
-        # undo backspace-at-start = split lines again
         r = op["row"]
         prev_len = op["prev_len"]
-        curr = op["curr"]  # list of chars that used to be the second line
-
-        line = buffer[r]
-        left = line[:prev_len]
+        curr = op["curr"]
+        left = buffer[r][:prev_len]
         buffer[r] = left
         buffer.insert(r + 1, curr[:])
 
-        row = r + 1
-        col = 0
     elif kind == "replace":
-        search = op["search"]
-        replacement = op["replace"]
-        replace_all(replacement, search)
+        replace_all(op["replace"], op["search"])
 
     ensure_cursor_in_bounds()
     adjust_top_line()
     adjust_left_col()
 
-    # so we can redo
+    # Allow redo
     redo_stack.append(op)
 
 
 def redo():
+    """
+    Reapply the last undone operation.
+    """
     if not redo_stack:
         return
     op = redo_stack.pop()
-    # re-apply the original op
     apply_op(op, record_history=False)
     undo_stack.append(op)
 
-def find_all_in_line(line_str: str, pattern: str):
-    res = []
-    n = len(line_str)
-    m = len(pattern)
 
+def find_all_in_line(line_str, pattern):
+    """Naive substring search used by search_all()."""
+    out = []
+    n, m = len(line_str), len(pattern)
     for i in range(n - m + 1):
         if line_str[i:i+m] == pattern:
-            res.append(i)
-    return res
+            out.append(i)
+    return out
 
-def search_all(pattern: str):
+
+def search_all(pattern):
+    """
+    Populate matches[] with all occurrences of `pattern`.
+    main.py will use this to highlight search results.
+    """
     global matches
     matches = []
     if not pattern:
@@ -480,24 +405,113 @@ def search_all(pattern: str):
 
     plen = len(pattern)
 
-    for row_, line_chars in enumerate(buffer):
-        line_str = "".join(line_chars)
-        positions = find_all_in_line(line_str, pattern)
-        for idx in positions:
+    for row_, chars in enumerate(buffer):
+        line_str = "".join(chars)
+        for idx in find_all_in_line(line_str, pattern):
             matches.append((row_, idx, idx + plen))
 
-def replace_all(pattern: str, replacement: str):
-    """
-    Replace all occurrences of `pattern` with `replacement` in the whole buffer.
-    Does not currently integrate with undo; it's a bulk edit.
-    """
-    global buffer
 
+def replace_all(pattern, replacement):
+    """
+    Simple (non-regex) global replace operation applied line-by-line.
+    """
     if not pattern:
         return
 
     for i, line_chars in enumerate(buffer):
         line_str = "".join(line_chars)
         if pattern in line_str:
-            new_str = line_str.replace(pattern, replacement)
-            buffer[i] = list(new_str)
+            buffer[i] = list(line_str.replace(pattern, replacement))
+
+
+def go_line_home():
+    global col
+    col = 0
+    ensure_cursor_in_bounds()
+    adjust_left_col()
+
+
+def go_line_end():
+    global col
+    col = len(buffer[row])
+    ensure_cursor_in_bounds()
+    adjust_left_col()
+
+
+def move_word_left():
+    """
+    Jump left by a whole word (Ctrl+Left).
+    """
+    global row, col
+
+    if col == 0 and row > 0:
+        row -= 1
+        col = len(buffer[row])
+        ensure_cursor_in_bounds()
+        adjust_top_line()
+        adjust_left_col()
+        return
+
+    line = buffer[row]
+    if not line or col == 0:
+        return
+
+    i = col - 1
+    while i >= 0 and line[i].isspace():
+        i -= 1
+    while i >= 0 and not line[i].isspace():
+        i -= 1
+
+    col = i + 1
+    ensure_cursor_in_bounds()
+    adjust_top_line()
+    adjust_left_col()
+
+
+def move_word_right():
+    """
+    Jump right by a whole word (Ctrl+Right).
+    """
+    global row, col
+
+    line = buffer[row]
+    n = len(line)
+
+    if col >= n and row < len(buffer) - 1:
+        row += 1
+        col = 0
+        line = buffer[row]
+        n = len(line)
+
+    i = col
+    while i < n and line[i].isspace():
+        i += 1
+    while i < n and not line[i].isspace():
+        i += 1
+
+    col = i
+    ensure_cursor_in_bounds()
+    adjust_top_line()
+    adjust_left_col()
+
+
+def page_up():
+    """
+    Moves up by an entire page (viewport height).
+    """
+    global row
+    row = max(0, row - MAX_LINE)
+    ensure_cursor_in_bounds()
+    adjust_top_line()
+    adjust_left_col()
+
+
+def page_down():
+    """
+    Moves down by an entire page (viewport height).
+    """
+    global row
+    row = min(len(buffer) - 1, row + MAX_LINE)
+    ensure_cursor_in_bounds()
+    adjust_top_line()
+    adjust_left_col()
