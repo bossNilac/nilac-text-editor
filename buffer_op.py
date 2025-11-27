@@ -335,7 +335,7 @@ def apply_op(op, record_history=True):
       right (for split_line: list of chars that moved to next line)
       prev_len, curr (for join_line)
     """
-    global row, col, buffer
+    global row, col, buffer,top_line, left_col
 
     kind = op["kind"]
 
@@ -378,6 +378,11 @@ def apply_op(op, record_history=True):
 
         row = r
         col = join_col
+
+    elif kind == "replace":
+        search = op["search"]
+        replacement = op["replace"]
+        replace_all(search, replacement)
 
     ensure_cursor_in_bounds()
     adjust_top_line()
@@ -436,6 +441,10 @@ def undo():
 
         row = r + 1
         col = 0
+    elif kind == "replace":
+        search = op["search"]
+        replacement = op["replace"]
+        replace_all(replacement, search)
 
     ensure_cursor_in_bounds()
     adjust_top_line()
@@ -476,3 +485,19 @@ def search_all(pattern: str):
         positions = find_all_in_line(line_str, pattern)
         for idx in positions:
             matches.append((row_, idx, idx + plen))
+
+def replace_all(pattern: str, replacement: str):
+    """
+    Replace all occurrences of `pattern` with `replacement` in the whole buffer.
+    Does not currently integrate with undo; it's a bulk edit.
+    """
+    global buffer
+
+    if not pattern:
+        return
+
+    for i, line_chars in enumerate(buffer):
+        line_str = "".join(line_chars)
+        if pattern in line_str:
+            new_str = line_str.replace(pattern, replacement)
+            buffer[i] = list(new_str)

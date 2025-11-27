@@ -131,7 +131,8 @@ def render_search():
     else:
         display_name = file_name
     print(
-        "-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d Ctrl+O Open Ctrl+S Save Ctrl+Q Quit"
+        """-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d Ctrl+O Open Ctrl+S Save Ctrl+Q Quit
+             Ctrl+Z Undo Ctrl+Y Redo Ctrl+/ Search Ctrl+R Replace Ctrl+left/right fast move"""
         % (status, display_name, buffer_op.row, buffer_op.col)
     )
     move_cursor()
@@ -208,6 +209,23 @@ def search_dialogue():
     search_mode = True
     buffer_op.search_all(search_string)
 
+def replace_all_dialogue():
+    global search_mode
+
+    search_string = input("Find: ")
+    replace_string = input("Replace with: ")
+
+    op = {
+        "kind": "replace",
+        "search": search_string,
+        "replace": replace_string,
+    }
+    buffer_op.apply_op(op, record_history=True)
+    # optional: run search again for the replacement text, or just exit search mode
+    buffer_op.search_all(replace_string)  # if you want to highlight new text
+    search_mode = True  # or False if you want to leave search mode
+
+
 def main():
     load_config()
     render()
@@ -258,6 +276,12 @@ def main():
                     clear_screen()
                     fix_ui()
                     search_dialogue()
+                    render()
+                    continue
+                elif key.name == 'r':
+                    clear_screen()
+                    fix_ui()
+                    replace_all_dialogue()
                     render()
                     continue
 
