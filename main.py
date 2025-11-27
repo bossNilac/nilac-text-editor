@@ -15,6 +15,11 @@ file_name = None
 status = None
 config_parser = configparser.ConfigParser()
 
+HIGHLIGHT_START = "\033[43m"  # yellow background
+HIGHLIGHT_END   = "\033[0m"   # reset
+search_mode = False
+
+
 
 def print_buffer():
     start = buffer_op.get_top_line()
@@ -40,9 +45,87 @@ def print_buffer():
 
 
 def render():
+    global file_name, status, search_mode
+    clear_screen()
+
+    if search_mode:
+        print_search_buffer()
+    else:
+        print_buffer()
+
+    if file_name is None:
+        display_name = "No Name"
+    else:
+        display_name = file_name
+
+    print(
+        "-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d Ctrl+O Open Ctrl+S Save Ctrl+Q Quit"
+        % (status, display_name, buffer_op.row, buffer_op.col)
+    )
+    move_cursor()
+
+
+def render_line(row_index, chars, from_col):
+    """
+    row_index = original row number in buffer
+    chars     = list of chars for this line (ALREADY sliced to visible region)
+    from_col  = the global column offset (needed to adjust match positions)
+    """
+
+    # find matches on this row
+    line_matches = [(s, e) for (row, s, e) in buffer_op.matches if row == row_index]
+
+    if not line_matches:
+        print("".join(chars))
+        return
+
+    line = ""
+    i = 0
+
+    for (start, end) in sorted(line_matches):
+        # Shift match positions into the visible window
+        local_start = start - from_col
+        local_end   = end   - from_col
+
+        # Skip if the match is completely outside visible area
+        if local_end <= 0 or local_start >= len(chars):
+            continue
+
+        # Clamp visible region to window
+        local_start = max(0, local_start)
+        local_end = min(len(chars), local_end)
+
+        # normal text before highlighted region
+        line += "".join(chars[i:local_start])
+
+        # highlighted region
+        line += HIGHLIGHT_START + "".join(chars[local_start:local_end]) + HIGHLIGHT_END
+
+        i = local_end
+
+    # rest of the line
+    line += "".join(chars[i:])
+    print(line)
+
+
+def print_search_buffer():
+    start = buffer_op.get_top_line()
+    end = min(start + buffer_op.get_max_line(), len(buffer_op.buffer))
+
+    from_col = buffer_op.get_left_col()
+    to_col = from_col + buffer_op.get_max_col()
+
+    for row in range(start, end):
+        full_line = buffer_op.buffer[row]
+        # slice the visible window
+        visible_chars = full_line[from_col:to_col]
+        render_line(row, visible_chars, from_col)
+
+
+def render_search():
     global file_name,status
     clear_screen()
-    print_buffer()
+    print_search_buffer()
     if file_name is None:
         display_name = "No Name"
     else:
@@ -119,10 +202,16 @@ def fix_ui():
     time.sleep(0.5)
     keyboard.send('esc')
 
+def search_dialogue():
+    global search_mode
+    search_string = input("Enter search criteria: ")
+    search_mode = True
+    buffer_op.search_all(search_string)
+
 def main():
     load_config()
     render()
-    global status
+    global status, search_mode
     while True:
         try:
             render()
@@ -132,7 +221,13 @@ def main():
             if key.event_type == keyboard.KEY_UP:
                 continue
 
-            # detect Ctrl hotkeys
+            if key.name == 'esc':
+                if search_mode:
+                    buffer_op.matches.clear()
+                    search_mode = False
+                    render()
+                    continue
+
             if keyboard.is_pressed('ctrl'):
                 if key.name == 'o':
                     clear_screen()
@@ -151,6 +246,20 @@ def main():
                     save_file()
                     save_config()
                     return
+                elif key.name == 'z':
+                    buffer_op.undo()
+                    render()
+                    continue
+                elif key.name == 'y':
+                    buffer_op.redo()
+                    render()
+                    continue
+                elif key.name == '/':
+                    clear_screen()
+                    fix_ui()
+                    search_dialogue()
+                    render()
+                    continue
 
             if key.name == 'ctrl' or key.name == 'shift':
                 continue

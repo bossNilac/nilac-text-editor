@@ -18,6 +18,13 @@ MAX_LINE = 24
 left_col = 0       # first visible column
 MAX_COL = 120       # how many columns you want to show (tweak to your terminal)
 
+undo_stack = []
+redo_stack = []
+
+matches = []
+
+
+
 
 def get_top_line():
     return top_line
@@ -215,68 +222,85 @@ def decrease_y():
     row = row - 1
 
 
-# in buffer_op.py
 def record_key(key):
     global row, col, buffer
 
-    # ignore key releases for normal behavior
+    # ignore key releases
     if key.event_type == keyboard.KEY_UP:
         return
 
     if key.event_type == keyboard.KEY_DOWN:
         history.append(key.name)
 
+    # cursor movement
     if key.name in functional_keys_cursor:
         handle_arrow_keys(key)
         return
 
+    # --- normal character insert (NOT space, enter, backspace) ---
     if key.event_type == keyboard.KEY_DOWN and key.name not in functional_keys_text:
-        append_key(key)
-        increase_x()
-        ensure_cursor_in_bounds()
-        adjust_top_line()
-        adjust_left_col()
+        ch = key.name
+        op = {
+            "kind": "insert_char",
+            "row": row,
+            "col": col,
+            "ch": ch,
+        }
+        apply_op(op, record_history=True)
         return
 
-    if key.name.lower() == 'space':
-        buffer[row].insert(col, " ")
-        increase_x()
-        ensure_cursor_in_bounds()
-        adjust_top_line()
-        adjust_left_col()
+    # --- SPACE ---
+    if key.name.lower() == "space":
+        op = {
+            "kind": "insert_char",
+            "row": row,
+            "col": col,
+            "ch": " ",
+        }
+        apply_op(op, record_history=True)
         return
 
-    if key.name.lower() == 'backspace':
+    # --- BACKSPACE ---
+    if key.name.lower() == "backspace":
+        # delete character before cursor
         if len(buffer[row]) > 0 and col > 0:
-            col -= 1
-            remove_char_from_buffer(row, col)
+            ch = buffer[row][col - 1]
+            op = {
+                "kind": "delete_char",
+                "row": row,
+                "col": col - 1,
+                "ch": ch,
+            }
+            apply_op(op, record_history=True)
+
+        # at start of line: join with previous line
         elif col == 0 and row > 0:
             prev_len = len(buffer[row - 1])
-            buffer[row - 1].extend(buffer[row])
-            buffer.pop(row)
-            row -= 1
-            col = prev_len
+            curr_line = buffer[row][:]   # copy current line
 
-        ensure_cursor_in_bounds()
-        adjust_top_line()
-        adjust_left_col()
+            op = {
+                "kind": "join_line",
+                "row": row - 1,          # previous line index
+                "col": prev_len,         # join point
+                "prev_len": prev_len,
+                "curr": curr_line,
+            }
+            apply_op(op, record_history=True)
+
         return
 
-    if key.name.lower() == 'enter':
+    # --- ENTER ---
+    if key.name.lower() == "enter":
         line = buffer[row]
-        if col == len(line):
-            buffer.insert(row + 1, [])
-        else:
-            before = line[:col]
-            after = line[col:]
-            buffer[row] = before
-            buffer.insert(row + 1, after)
+        right = line[col:][:]   # chars that move to new line
 
-        row += 1
-        col = 0
-        ensure_cursor_in_bounds()
-        adjust_top_line()
-        adjust_left_col()
+        op = {
+            "kind": "split_line",
+            "row": row,
+            "col": col,
+            "right": right,
+        }
+        apply_op(op, record_history=True)
         return
 
 def load_file(path):
@@ -301,3 +325,154 @@ def load_file(path):
     left_col = 0
 
     return path  # so main can store it in file_name
+
+def apply_op(op, record_history=True):
+    """
+    op: dict with keys:
+      kind: "insert_char" | "delete_char" | "split_line" | "join_line"
+      row, col
+      ch (for char ops)
+      right (for split_line: list of chars that moved to next line)
+      prev_len, curr (for join_line)
+    """
+    global row, col, buffer
+
+    kind = op["kind"]
+
+    if kind == "insert_char":
+        r = op["row"]
+        c = op["col"]
+        ch = op["ch"]
+        buffer[r].insert(c, ch)
+        row = r
+        col = c + 1
+
+    elif kind == "delete_char":
+        r = op["row"]
+        c = op["col"]
+        if 0 <= r < len(buffer) and 0 <= c < len(buffer[r]):
+            del buffer[r][c]
+        row = r
+        col = c
+
+    elif kind == "split_line":
+        r = op["row"]
+        c = op["col"]
+        right = op["right"]  # list of chars
+
+        line = buffer[r]
+        left = line[:c]
+        buffer[r] = left
+        buffer.insert(r + 1, right[:])  # copy
+
+        row = r + 1
+        col = 0
+
+    elif kind == "join_line":
+        r = op["row"]        # index of previous line
+        join_col = op["col"] # where the join happened
+
+        if r + 1 < len(buffer):
+            buffer[r].extend(buffer[r + 1])
+            del buffer[r + 1]
+
+        row = r
+        col = join_col
+
+    ensure_cursor_in_bounds()
+    adjust_top_line()
+    adjust_left_col()
+
+    if record_history:
+        undo_stack.append(op)
+        redo_stack.clear()
+
+def undo():
+    global row, col
+
+    if not undo_stack:
+        return
+
+    op = undo_stack.pop()
+    kind = op["kind"]
+
+    if kind == "insert_char":
+        # undo = delete the char we inserted
+        r = op["row"]
+        c = op["col"]
+        if 0 <= r < len(buffer) and 0 <= c < len(buffer[r]):
+            del buffer[r][c]
+        row = r
+        col = c
+
+    elif kind == "delete_char":
+        # undo = reinsert the deleted char
+        r = op["row"]
+        c = op["col"]
+        ch = op["ch"]
+        buffer[r].insert(c, ch)
+        row = r
+        col = c + 1
+
+    elif kind == "split_line":
+        # undo Enter = join lines back
+        r = op["row"]
+        if r + 1 < len(buffer):
+            buffer[r].extend(buffer[r + 1])
+            del buffer[r + 1]
+        row = r
+        col = op["col"]
+
+    elif kind == "join_line":
+        # undo backspace-at-start = split lines again
+        r = op["row"]
+        prev_len = op["prev_len"]
+        curr = op["curr"]  # list of chars that used to be the second line
+
+        line = buffer[r]
+        left = line[:prev_len]
+        buffer[r] = left
+        buffer.insert(r + 1, curr[:])
+
+        row = r + 1
+        col = 0
+
+    ensure_cursor_in_bounds()
+    adjust_top_line()
+    adjust_left_col()
+
+    # so we can redo
+    redo_stack.append(op)
+
+
+def redo():
+    if not redo_stack:
+        return
+    op = redo_stack.pop()
+    # re-apply the original op
+    apply_op(op, record_history=False)
+    undo_stack.append(op)
+
+def find_all_in_line(line_str: str, pattern: str):
+    res = []
+    n = len(line_str)
+    m = len(pattern)
+
+    for i in range(n - m + 1):
+        if line_str[i:i+m] == pattern:
+            res.append(i)
+    return res
+
+def search_all(pattern: str):
+    global matches
+    matches = []
+    if not pattern:
+        return
+
+    plen = len(pattern)
+
+    for row_, line_chars in enumerate(buffer):
+        line_str = "".join(line_chars)
+        positions = find_all_in_line(line_str, pattern)
+        for idx in positions:
+            matches.append((row_, idx, idx + plen))
