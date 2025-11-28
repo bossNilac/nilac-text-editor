@@ -185,6 +185,16 @@ def append_key(key):
     """Insert a raw character at the cursor position."""
     buffer[row].insert(col, key.name)
 
+def clear_buffer():
+    """Clear buffer and reset cursor position."""
+    global row, col, top_line, left_col
+    buffer.clear()
+    row = 0
+    col = 0
+    top_line = 0
+    left_col = 0
+    redo_stack.clear()
+    undo_stack.clear()
 
 def record_key(key):
     """
@@ -278,6 +288,8 @@ def load_file(path):
     col = 0
     top_line = 0
     left_col = 0
+    redo_stack.clear()
+    undo_stack.clear()
 
     return path
 

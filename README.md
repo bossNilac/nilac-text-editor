@@ -1,152 +1,174 @@
-# Text Editor Project
+# Nilac Text Editor
 
-A fully custom terminal-based text editor implemented in Python.\
-This project started as a minimal buffer experiment and evolved into a
-functional editor with real navigation, undo/redo, search, replace, and
-multi-line editing. The goal was not to recreate Vim or Nano, but to
-build a complete editing pipeline from first principles, without relying
-on curses, GUI frameworks, or prebuilt widgets.
+A minimal terminal-based text editor written in Python.  
+The project focuses on implementing the core mechanics of text editing—buffer structures, input handling, rendering, and reversible operations—without relying on `curses`, GUI frameworks, or prebuilt widgets.
 
-The result is a compact yet expressive demonstration of state
-management, input handling, rendering logic, and algorithmic thinking.
+The result is a compact, transparent example of how editors work internally.
+
+---
 
 ## Features
 
-### Editing Core
+### Buffer Model
+Text is stored as a list of character lists:
 
-The editor maintains a two-dimensional buffer:
-
-``` python
+```python
 buffer = [list_of_chars_per_line]
 ```
 
-All text operations are expressed in terms of this structure. The cursor
-is tracked by `(row, col)` indices, and vertical/horizontal scrolling is
-handled via `top_line` and `left_col`.
+The cursor is tracked as `(row, col)`, and viewport scrolling is managed through `top_line` and `left_col`.
 
-Supported editing features include:
+Supported editing operations:
 
--   Inserting characters
--   Backspace and deletion logic
--   Multi-line editing
--   Proper handling of line splits (Enter) and joins (Backspace at
-    column zero)
+- Character insertion and deletion  
+- Line splitting and joining  
+- Multi-line editing  
 
-### Undo and Redo
+---
 
-Every change to the buffer is recorded as an operation object, such as:
+### Undo / Redo
+Each modification is recorded as an operation object (e.g., character insert, line split).  
+Undo applies the inverse of the most recent operation; redo reapplies the original.
 
-``` python
-{"kind": "insert_char", "row": r, "col": c, "ch": "a"}
-{"kind": "split_line", "row": r, "col": c, "right": [...]}
-```
+This supports:
 
-Undo is implemented by applying the inverse of the last operation, and
-redo re-applies the original.\
-This system works reliably for character edits, line splits/joins, and
-replace operations.
+- Character edits  
+- Line splits/joins  
+- Replace-all operations  
 
-### Search and Highlight
+---
 
-Search uses a straightforward multi-line substring scan.\
-Search results are stored as `(row, start, end)` tuples.
+### Search & Highlight
+Search is a multi-line substring scan.  
+Results are stored as `(row, start, end)` tuples.
 
-Rendering highlights is done using ANSI escape sequences. The buffer
-itself is untouched; highlighting is purely a view-layer concern.
+Highlighting is applied during rendering through ANSI codes.  
+The buffer itself remains untouched.
+
+---
 
 ### Replace All
+Global replace is implemented via grouped delete/insert operations to maintain undo correctness.
 
-The editor supports bulk replace operations. For undo correctness, each
-replace is recorded as a sequence of delete/insert operations, grouped
-so the entire replace action can be reversed consistently.
+---
 
-### Smart Navigation
+### Navigation
+Supported navigation:
 
-Supported navigation keys:
+- Arrow keys  
+- Home / End  
+- Ctrl+Left / Ctrl+Right (word navigation)  
+- Page Up / Page Down  
 
--   Home / End
--   Ctrl+Left and Ctrl+Right (word-based movement)
--   Page Up / Page Down
--   Arrow keys
+Hotkeys:
 
-------------------------------------------------------------------------
+- **Ctrl+O** – Open file  
+- **Ctrl+S** – Save  
+- **Ctrl+Z** – Undo  
+- **Ctrl+Y** – Redo  
+- **Ctrl+/** – Search  
+- **Ctrl+Q** – Quit  
+- **Ctrl+N** – New File  
 
-## Rendering System
+---
 
-Rendering is done manually using ANSI cursor codes.\
-The renderer slices each logical line using:
+## Rendering
+Rendering uses manual ANSI cursor movement and slicing:
 
-``` python
+```python
 visible = full_line[from_col:to_col]
 ```
 
-For search mode, a separate renderer walks through the visible segment
-and inserts highlight sequences where appropriate.
+During search mode, the renderer overlays highlight spans within the visible range.
 
-------------------------------------------------------------------------
+---
 
 ## Input Handling
+The editor processes key events in real time through the `keyboard` module:
 
-The editor uses the `keyboard` module to read events in real time.\
-Every key press passes through:
-
-``` python
+```python
 buffer_op.record_key(key)
 ```
 
-Key events include cursor motion, editing, navigation (Home, End,
-Ctrl+Arrows), and hotkeys (Ctrl+O, Ctrl+S, Ctrl+Q, Ctrl+Z, Ctrl+Y,
-Ctrl+/).
+This includes navigation, editing, and command hotkeys.
 
-------------------------------------------------------------------------
+*Note:* The `keyboard` module has platform-specific constraints and may require elevated permissions on some systems.
+
+---
 
 ## File I/O
+Basic load/save logic:
 
-Loading and saving are implemented with simple line transformations:
-
-``` python
+```python
 buffer = [list(line.rstrip("\n")) for line in f]
 ```
 
-Configuration persists the last opened file path using `editor.ini`.
+The last opened file path is stored in `editor.ini`.
 
-------------------------------------------------------------------------
+---
 
-## Challenges and Learnings
+## Screenshots / GIFs
 
-Building a terminal text editor from scratch required solving problems
-usually hidden behind higher-level libraries:
+Recommended format:
 
--   Terminal state resets
--   Cursor and scroll management
--   Insert/delete mechanics
--   Rendering with no flicker
--   Maintaining undoable operations for multi-line changes
+1. Basic editing ![Editing Demo](assets/typing.gif) 
+2. Undo/redo demonstration  ![Editing Demo](assets/redo_undo.gif) 
+3. Search + highlight  ![Editing Demo](assets/SAVE.gif)
+4. Replace-all example ![Editing Demo](assets/replacer.gif)
 
-Undo/redo in particular required designing reversible operations for
-every edit type, including line splits and joins.
+---
 
-Search highlighting required a layered rendering approach that overlays
-highlight spans onto the visible buffer region without modifying the
-underlying text.
+## Challenges & Lessons Learned
 
-------------------------------------------------------------------------
+Implementing an editor manually requires solving problems typically abstracted away:
 
-## Final Words
+- Cursor/scroll coordination  
+- Flicker-free terminal rendering  
+- Reversible state transitions for undo/redo  
+- Multi-line edits with consistent invariants  
+- Non-destructive highlight rendering  
 
-This project demonstrates that a functional text editor can be built
-from first principles without relying on terminal frameworks or pre-made
-UI components. Every aspect of the editor---from input handling and
-rendering to text storage, navigation, undo/redo, and search---was
-implemented manually and deliberately.
+These constraints shaped the structure of the buffer model and operation system.
 
-The result is a compact, educational, and technically honest example of
-how text editors operate internally. It touches on buffer architecture,
-incremental state changes, terminal control sequences, and efficient
-user interaction. Despite its minimalist scope, the editor is
-feature-complete enough to showcase meaningful engineering decisions and
-a solid understanding of system-level program behavior.
+---
 
-This codebase stands as a clear reference for anyone seeking to
-understand the mechanics behind text editors or low-level text
-manipulation in terminal environments.
+## Running the Editor
+
+**Requirements**
+
+- Python 3.10+  
+- `keyboard` module  
+
+**Install**
+
+```bash
+pip install keyboard
+```
+
+**Run**
+
+```bash
+python main.py 
+```
+
+**Windows:**  
+A `run.bat` file is included for convenience.
+
+---
+
+## Project Scope
+
+This project demonstrates core concepts behind text editors:
+
+- Buffer architecture and state transitions  
+- Manual terminal rendering  
+- Input/event handling  
+- Undo/redo mechanisms  
+- Search and replace  
+
+It’s designed to be clear, direct, and easy to reason about — suitable as both a learning tool and a structured portfolio project.
+
+---
+
+## License
+MIT

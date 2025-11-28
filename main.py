@@ -144,9 +144,9 @@ def render_search():
     display_name = file_name if file_name else "No Name"
 
     print(
-        "-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d "
-        "Ctrl+O Open Ctrl+S Save Ctrl+Q Quit\n"
-        "Ctrl+Z Undo Ctrl+Y Redo Ctrl+/ Search Ctrl+R Replace Ctrl+Left/Right word jump" %
+        """-- FILE EDITOR -- STATUS:[%s] -- [%s] Ln %d, Col %d 
+        Ctrl+O Open Ctrl+S Save Ctrl+Q Quit
+        Ctrl+Z Undo Ctrl+Y Redo Ctrl+/ Search Ctrl+R Replace Ctrl+Left/Right word jump""" %
         (status, display_name, buffer_op.row, buffer_op.col)
     )
     move_cursor()
@@ -230,7 +230,7 @@ def fix_ui():
     Small hack: after reading a key event, the terminal can
     get out of sync visually. Sending ESC cleans up the state.
     """
-    time.sleep(0.5)
+    time.sleep(1)
     keyboard.send("esc")
 
 
@@ -332,6 +332,16 @@ def main():
                     clear_screen()
                     fix_ui()
                     replace_all_dialogue()
+                    continue
+                elif key.name == "n":
+                    global file_name
+                    clear_screen()
+                    file_name = None
+                    fix_ui()
+                    buffer_op.clear_buffer()
+                    save_file()
+                    save_config()
+                    load_config()
                     continue
 
             if key.name in {"ctrl", "shift"}:
