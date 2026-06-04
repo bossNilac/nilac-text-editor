@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # buffer_op.py
 # This module contains all the low-level text-editing logic:
 # the cursor, viewport scrolling, undo/redo system, and operations
@@ -8,52 +10,59 @@
 import keyboard
 import os
 import sys
+from typing import Any
+
+Operation = dict[str, Any]
+SearchMatch = tuple[int, int, int]
 
 # Keys that insert text vs keys that move the cursor.
 functional_keys_text = {"space", "backspace", "enter"}
 functional_keys_cursor = {"up", "down", "left", "right"}
 
 # Keeps a simple log of raw key events (mostly for debugging).
-history = []
+history: list[str] = []
 
 # The text buffer. Represented as a list of lines, where each line is a list of chars.
-buffer = [[]]
+buffer: list[list[str]] = [[]]
 
 # Logical cursor position in the buffer.
-row = 0
-col = 0
+row: int = 0
+col: int = 0
 
 # Viewport scrolling offsets.
-top_line = 0
-MAX_LINE = 24
+top_line: int = 0
+MAX_LINE: int = 24
 
-left_col = 0
-MAX_COL = 120
+left_col: int = 0
+MAX_COL: int = 120
 
 # Undo/redo stacks storing operations dictionaries.
-undo_stack = []
-redo_stack = []
+undo_stack: list[Operation] = []
+redo_stack: list[Operation] = []
 
 # List of (row, start, end) tuples marking search matches.
-matches = []
+matches: list[SearchMatch] = []
 
 
 # ---- Basic state getters used by main.py ----
 
-def get_top_line():
+def get_top_line() -> int:
     return top_line
 
-def get_max_line():
+
+def get_max_line() -> int:
     return MAX_LINE
 
-def get_left_col():
+
+def get_left_col() -> int:
     return left_col
 
-def get_max_col():
+
+def get_max_col() -> int:
     return MAX_COL
 
 
-def remove_char_from_buffer(row_, col_):
+def remove_char_from_buffer(row_: int, col_: int) -> None:
     """
     Safely remove a character from a specific position in the buffer.
     This helper exists because many edits need the same logic,
@@ -71,7 +80,7 @@ def remove_char_from_buffer(row_, col_):
     buffer[row_] = temp
 
 
-def move_cursor():
+def move_cursor() -> None:
     """
     Convert logical cursor coordinates (row, col) into terminal coordinates,
     considering scroll offsets, and move the real terminal cursor there.
@@ -86,7 +95,7 @@ def move_cursor():
     sys.stdout.flush()
 
 
-def ensure_cursor_in_bounds():
+def ensure_cursor_in_bounds() -> None:
     """
     After any edit, make sure row/col are still valid.
     Prevents cursor from drifting outside its line length.
@@ -102,7 +111,7 @@ def ensure_cursor_in_bounds():
         col = line_len
 
 
-def adjust_top_line():
+def adjust_top_line() -> None:
     """
     Scroll the viewport vertically so the cursor stays visible.
     """
@@ -120,7 +129,7 @@ def adjust_top_line():
     top_line = max(0, min(top_line, len(buffer) - MAX_LINE))
 
 
-def adjust_left_col():
+def adjust_left_col() -> None:
     """
     Horizontal scrolling. Ensures that long lines are viewable
     and the cursor doesn't disappear off-screen horizontally.
@@ -140,7 +149,7 @@ def adjust_left_col():
     left_col = max(0, min(left_col, line_len - MAX_COL))
 
 
-def handle_arrow_keys(key):
+def handle_arrow_keys(key: Any) -> None:
     """
     Arrow key navigation with sensible behavior across line boundaries.
     """
@@ -176,16 +185,16 @@ def handle_arrow_keys(key):
     adjust_left_col()
 
 
-def clear_screen():
+def clear_screen() -> None:
     """Simple wrapper around system CLS/clear."""
     os.system('cls' if os.name == 'nt' else 'clear')
 
 
-def append_key(key):
+def append_key(key: Any) -> None:
     """Insert a raw character at the cursor position."""
     buffer[row].insert(col, key.name)
 
-def clear_buffer():
+def clear_buffer() -> None:
     """Clear buffer and reset cursor position."""
     global row, col, top_line, left_col
     buffer.clear()
@@ -196,7 +205,7 @@ def clear_buffer():
     redo_stack.clear()
     undo_stack.clear()
 
-def record_key(key):
+def record_key(key: Any) -> None:
     """
     Main entry point for all edits.
     This is where we translate a keyboard event into a mutation
@@ -268,7 +277,7 @@ def record_key(key):
         return
 
 
-def load_file(path):
+def load_file(path: str) -> str:
     """
     Load disk file into buffer.
     Resets viewport and cursor.
@@ -294,7 +303,7 @@ def load_file(path):
     return path
 
 
-def apply_op(op, record_history=True):
+def apply_op(op: Operation, record_history: bool = True) -> None:
     """
     General operation dispatcher.
     Every undoable action comes through here.
@@ -342,11 +351,13 @@ def apply_op(op, record_history=True):
         redo_stack.clear()
 
 
-def undo():
+def undo() -> None:
     """
     Reverse the last edit.
     Undo logic mirrors apply_op() but in reverse.
     """
+    global row, col
+
     if not undo_stack:
         return
 
@@ -362,8 +373,10 @@ def undo():
 
     elif kind == "split_line":
         r = op["row"]
+        c = op["col"]
         buffer[r].extend(buffer[r + 1])
         del buffer[r + 1]
+        row, col = r, c
 
     elif kind == "join_line":
         r = op["row"]
@@ -384,7 +397,7 @@ def undo():
     redo_stack.append(op)
 
 
-def redo():
+def redo() -> None:
     """
     Reapply the last undone operation.
     """
@@ -395,17 +408,17 @@ def redo():
     undo_stack.append(op)
 
 
-def find_all_in_line(line_str, pattern):
+def find_all_in_line(line_str: str, pattern: str) -> list[int]:
     """Naive substring search used by search_all()."""
     out = []
     n, m = len(line_str), len(pattern)
     for i in range(n - m + 1):
-        if line_str[i:i+m] == pattern:
+        if line_str[i:i + m] == pattern:
             out.append(i)
     return out
 
 
-def search_all(pattern):
+def search_all(pattern: str) -> None:
     """
     Populate matches[] with all occurrences of `pattern`.
     main.py will use this to highlight search results.
@@ -423,7 +436,7 @@ def search_all(pattern):
             matches.append((row_, idx, idx + plen))
 
 
-def replace_all(pattern, replacement):
+def replace_all(pattern: str, replacement: str) -> None:
     """
     Simple (non-regex) global replace operation applied line-by-line.
     """
@@ -436,21 +449,21 @@ def replace_all(pattern, replacement):
             buffer[i] = list(line_str.replace(pattern, replacement))
 
 
-def go_line_home():
+def go_line_home() -> None:
     global col
     col = 0
     ensure_cursor_in_bounds()
     adjust_left_col()
 
 
-def go_line_end():
+def go_line_end() -> None:
     global col
     col = len(buffer[row])
     ensure_cursor_in_bounds()
     adjust_left_col()
 
 
-def move_word_left():
+def move_word_left() -> None:
     """
     Jump left by a whole word (Ctrl+Left).
     """
@@ -480,7 +493,7 @@ def move_word_left():
     adjust_left_col()
 
 
-def move_word_right():
+def move_word_right() -> None:
     """
     Jump right by a whole word (Ctrl+Right).
     """
@@ -507,7 +520,7 @@ def move_word_right():
     adjust_left_col()
 
 
-def page_up():
+def page_up() -> None:
     """
     Moves up by an entire page (viewport height).
     """
@@ -518,7 +531,7 @@ def page_up():
     adjust_left_col()
 
 
-def page_down():
+def page_down() -> None:
     """
     Moves down by an entire page (viewport height).
     """

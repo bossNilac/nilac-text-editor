@@ -1,174 +1,134 @@
 # Nilac Text Editor
 
-A minimal terminal-based text editor written in Python.  
-The project focuses on implementing the core mechanics of text editing—buffer structures, input handling, rendering, and reversible operations—without relying on `curses`, GUI frameworks, or prebuilt widgets.
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![pytest](https://img.shields.io/badge/tests-pytest-green)
+![MIT License](https://img.shields.io/badge/license-MIT-lightgrey)
+![Portfolio Project](https://img.shields.io/badge/project-portfolio-orange)
 
-The result is a compact, transparent example of how editors work internally.
+Nilac Text Editor is a minimal terminal-based text editor written in Python from scratch. It focuses on demonstrating editor internals such as mutable text buffer management, cursor and viewport state, manual terminal rendering, undo/redo using reversible operations, search highlighting, replace-all behavior, and file loading/saving.
 
----
+This is a portfolio and educational project, not a production editor or a package intended for public distribution.
+
+## Demo
+
+The repository includes GIF demos showing the editor's core behavior:
+
+- Typing and navigation: ![Typing demo](assets/typing.gif)
+- Undo and redo: ![Undo redo demo](assets/redo_undo.gif)
+- Search/save workflow: ![Save demo](assets/SAVE.gif)
+- Replace-all behavior: ![Replace demo](assets/replacer.gif)
 
 ## Features
 
-### Buffer Model
-Text is stored as a list of character lists:
+- Mutable line buffer represented as lists of characters.
+- Cursor movement across rows, columns, line boundaries, and words.
+- Vertical and horizontal viewport scrolling.
+- Manual terminal rendering with ANSI cursor movement.
+- Undo and redo for reversible edit operations.
+- Search result tracking and ANSI highlighting.
+- Replace-all support with undo integration.
+- Basic file open, save, new-file, and last-file restore behavior.
 
-```python
-buffer = [list_of_chars_per_line]
-```
+## Why This Project Matters
 
-The cursor is tracked as `(row, col)`, and viewport scrolling is managed through `top_line` and `left_col`.
+Text editors hide a surprising amount of state management behind simple interactions. This project keeps those mechanics visible by implementing the core behavior directly instead of relying on `curses`, GUI frameworks, or editor widgets.
 
-Supported editing operations:
+## Architecture Overview
 
-- Character insertion and deletion  
-- Line splitting and joining  
-- Multi-line editing  
+The editor is split into two main modules:
 
----
+- `buffer_op.py` owns the mutable text buffer, cursor position, viewport offsets, search matches, and undo/redo stacks.
+- `main.py` owns the terminal event loop, rendering, prompts, hotkeys, and file workflow.
 
-### Undo / Redo
-Each modification is recorded as an operation object (e.g., character insert, line split).  
-Undo applies the inverse of the most recent operation; redo reapplies the original.
+Text is stored as a list of lines, where each line is a list of characters. Editing actions are represented as operation dictionaries, then applied through a central dispatcher so undo and redo can reverse or replay the same logical changes.
 
-This supports:
+See [docs/architecture.md](docs/architecture.md) for a fuller explanation of the design.
 
-- Character edits  
-- Line splits/joins  
-- Replace-all operations  
+## Running Locally
 
----
+Requirements:
 
-### Search & Highlight
-Search is a multi-line substring scan.  
-Results are stored as `(row, start, end)` tuples.
+- Python 3.10+
+- `keyboard`
 
-Highlighting is applied during rendering through ANSI codes.  
-The buffer itself remains untouched.
-
----
-
-### Replace All
-Global replace is implemented via grouped delete/insert operations to maintain undo correctness.
-
----
-
-### Navigation
-Supported navigation:
-
-- Arrow keys  
-- Home / End  
-- Ctrl+Left / Ctrl+Right (word navigation)  
-- Page Up / Page Down  
-
-Hotkeys:
-
-- **Ctrl+O** – Open file  
-- **Ctrl+S** – Save  
-- **Ctrl+Z** – Undo  
-- **Ctrl+Y** – Redo  
-- **Ctrl+/** – Search  
-- **Ctrl+Q** – Quit  
-- **Ctrl+N** – New File  
-
----
-
-## Rendering
-Rendering uses manual ANSI cursor movement and slicing:
-
-```python
-visible = full_line[from_col:to_col]
-```
-
-During search mode, the renderer overlays highlight spans within the visible range.
-
----
-
-## Input Handling
-The editor processes key events in real time through the `keyboard` module:
-
-```python
-buffer_op.record_key(key)
-```
-
-This includes navigation, editing, and command hotkeys.
-
-*Note:* The `keyboard` module has platform-specific constraints and may require elevated permissions on some systems.
-
----
-
-## File I/O
-Basic load/save logic:
-
-```python
-buffer = [list(line.rstrip("\n")) for line in f]
-```
-
-The last opened file path is stored in `editor.ini`.
-
----
-
-## Screenshots / GIFs
-
-Recommended format:
-
-1. Basic editing ![Editing Demo](assets/typing.gif) 
-2. Undo/redo demonstration  ![Editing Demo](assets/redo_undo.gif) 
-3. Search + highlight  ![Editing Demo](assets/SAVE.gif)
-4. Replace-all example ![Editing Demo](assets/replacer.gif)
-
----
-
-## Challenges & Lessons Learned
-
-Implementing an editor manually requires solving problems typically abstracted away:
-
-- Cursor/scroll coordination  
-- Flicker-free terminal rendering  
-- Reversible state transitions for undo/redo  
-- Multi-line edits with consistent invariants  
-- Non-destructive highlight rendering  
-
-These constraints shaped the structure of the buffer model and operation system.
-
----
-
-## Running the Editor
-
-**Requirements**
-
-- Python 3.10+  
-- `keyboard` module  
-
-**Install**
+Install dependencies:
 
 ```bash
-pip install keyboard
+pip install -r requirements.txt
 ```
 
-**Run**
+Run the editor:
 
 ```bash
-python main.py 
+python main.py
 ```
 
-**Windows:**  
-A `run.bat` file is included for convenience.
+On Windows, `run.bat` is also included as a convenience launcher.
 
----
+## Controls
 
-## Project Scope
+| Control | Action |
+| --- | --- |
+| Arrow keys | Move cursor |
+| Home / End | Move to start or end of line |
+| Ctrl+Left / Ctrl+Right | Move by word |
+| Page Up / Page Down | Move by viewport page |
+| Ctrl+O | Open file |
+| Ctrl+S | Save file |
+| Ctrl+N | Create a new file |
+| Ctrl+Z | Undo |
+| Ctrl+Y | Redo |
+| Ctrl+/ | Search |
+| Ctrl+R | Replace all |
+| Esc | Exit search mode |
+| Ctrl+Q | Save and quit |
 
-This project demonstrates core concepts behind text editors:
+## Testing
 
-- Buffer architecture and state transitions  
-- Manual terminal rendering  
-- Input/event handling  
-- Undo/redo mechanisms  
-- Search and replace  
+The test suite covers core editor behavior such as insert/delete, undo/redo, line split/join, search, replace-all, cursor movement, page navigation, file loading, and buffer reset/clear behavior.
 
-It’s designed to be clear, direct, and easy to reason about — suitable as both a learning tool and a structured portfolio project.
+Run tests with:
 
----
+```bash
+pytest
+```
+
+## Project Structure
+
+```text
+.
+|-- assets/                 Demo GIFs
+|-- docs/                   Project documentation
+|-- tests/                  pytest coverage for buffer operations
+|-- buffer_op.py            Buffer, cursor, viewport, search, and undo/redo logic
+|-- main.py                 Terminal rendering, input loop, hotkeys, and file I/O
+|-- requirements.txt        Runtime dependencies
+|-- pyproject.toml          Test, formatting, and linting configuration
+|-- run.bat                 Windows launcher
+|-- LICENSE                 MIT license
+`-- README.md              Project overview
+```
+
+## Known Limitations
+
+- Uses terminal-specific rendering and input behavior.
+- Keyboard/input handling may vary across operating systems.
+- The `keyboard` package may require elevated permissions depending on the OS.
+- No mouse support.
+- No syntax highlighting.
+- No tabs or multiple open files.
+- Intended as a portfolio/learning project, not a production editor.
+
+## Future Improvements
+
+- Refactor global editor state into an `EditorState` object.
+- Replace dictionary-based operations with typed operation dataclasses.
+- Add syntax highlighting.
+- Add line numbers.
+- Add dirty-state tracking.
+- Improve cross-platform input handling.
+- Add more tests for edge cases.
 
 ## License
+
 MIT

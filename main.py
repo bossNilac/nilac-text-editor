@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 # This file contains the high-level control flow of the editor.
 # It manages rendering, hotkeys, file I/O, and interaction with buffer_op,
 # which handles the actual text buffer and cursor state.
 
 import configparser
 import time
+from typing import Sequence
 
 import keyboard
 
@@ -16,8 +19,8 @@ functional_keys_text = {"space", "backspace", "enter"}
 functional_keys_cursor = {"up", "down", "left", "right", "home", "end", "page up", "page down"}
 
 # Path of the currently opened file (None when unsaved).
-file_name = None
-status = None
+file_name: str | None = None
+status: str | None = None
 
 # Editor reads/writes the most recently opened file to editor.ini.
 config_parser = configparser.ConfigParser()
@@ -27,10 +30,10 @@ HIGHLIGHT_START = "\033[43m"   # yellow background
 HIGHLIGHT_END   = "\033[0m"
 
 # When True, render() shows highlighted search results.
-search_mode = False
+search_mode: bool = False
 
 
-def print_buffer():
+def print_buffer() -> None:
     """
     Draw the portion of the buffer currently visible in the viewport.
     This editor only renders what fits on screen to keep things fast
@@ -53,7 +56,7 @@ def print_buffer():
         print("")
 
 
-def render():
+def render() -> None:
     """
     Clear the screen and redraw the entire editor UI.
     This includes the text viewport, status bar, and moving
@@ -79,7 +82,7 @@ def render():
     move_cursor()
 
 
-def render_line(row_index, chars, from_col):
+def render_line(row_index: int, chars: Sequence[str], from_col: int) -> None:
     """
     Helper used only when the editor is in search mode.
     Draws a single line with highlighted matches.
@@ -100,13 +103,13 @@ def render_line(row_index, chars, from_col):
     # Apply highlighting around matched segments
     for (start, end) in sorted(line_matches):
         local_start = start - from_col
-        local_end   = end   - from_col
+        local_end = end - from_col
 
         if local_end <= 0 or local_start >= len(chars):
             continue  # totally outside the viewport
 
         local_start = max(0, local_start)
-        local_end   = min(len(chars), local_end)
+        local_end = min(len(chars), local_end)
 
         line += "".join(chars[i:local_start])
         line += HIGHLIGHT_START + "".join(chars[local_start:local_end]) + HIGHLIGHT_END
@@ -116,7 +119,7 @@ def render_line(row_index, chars, from_col):
     print(line)
 
 
-def print_search_buffer():
+def print_search_buffer() -> None:
     """
     Like print_buffer(), but uses render_line() so that
     matched search results appear highlighted.
@@ -132,7 +135,7 @@ def print_search_buffer():
         render_line(row, visible, from_col)
 
 
-def render_search():
+def render_search() -> None:
     """
     Separate rendering path specifically used during replace-all
     operations or search mode. Keeps UI consistent.
@@ -152,7 +155,7 @@ def render_search():
     move_cursor()
 
 
-def load_config():
+def load_config() -> None:
     """
     On startup, try to restore the last opened file.
     If the ini file doesn’t exist or is corrupt, just start empty.
@@ -171,7 +174,7 @@ def load_config():
         status = "UNSAVED"
 
 
-def save_config():
+def save_config() -> None:
     """
     Writes the currently opened file path to editor.ini.
     Nothing fancy, just a single key.
@@ -186,7 +189,7 @@ def save_config():
         config_parser.write(configfile)
 
 
-def open_file():
+def open_file() -> None:
     """
     Prompt user for a path and attempt to load it.
     This intentionally loops until a valid file is entered.
@@ -207,7 +210,7 @@ def open_file():
     save_config()
 
 
-def save_file():
+def save_file() -> None:
     """
     Save the current buffer back to disk.
     If the user hasn't chosen a name yet, prompt for one.
@@ -225,7 +228,7 @@ def save_file():
     status = "SAVED"
 
 
-def fix_ui():
+def fix_ui() -> None:
     """
     Small hack: after reading a key event, the terminal can
     get out of sync visually. Sending ESC cleans up the state.
@@ -234,7 +237,7 @@ def fix_ui():
     keyboard.send("esc")
 
 
-def search_dialogue():
+def search_dialogue() -> None:
     """
     Ask user for a search string, switch into search mode, and highlight
     all matches immediately.
@@ -245,7 +248,7 @@ def search_dialogue():
     buffer_op.search_all(search_string)
 
 
-def replace_all_dialogue():
+def replace_all_dialogue() -> None:
     """
     Full replace-all flow: prompt for search and replace terms,
     apply the operation (with undo support), and refresh highlights.
@@ -267,7 +270,7 @@ def replace_all_dialogue():
     search_mode = True
 
 
-def main():
+def main() -> None:
     """
     Core event loop of the editor.
     Reads keyboard events, handles hotkeys, and delegates

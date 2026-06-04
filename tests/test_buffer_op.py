@@ -199,8 +199,12 @@ def test_page_up_and_down():
     assert buffer_op.row == max(0, 30 - buffer_op.MAX_LINE)
 
     # page down should move down by MAX_LINE rows but not past last line
+    row_before_page_down = buffer_op.row
     buffer_op.page_down()
-    expected_row = min(len(buffer_op.buffer) - 1, buffer_op.row + buffer_op.MAX_LINE)
+    expected_row = min(
+        len(buffer_op.buffer) - 1,
+        row_before_page_down + buffer_op.MAX_LINE,
+    )
     assert buffer_op.row == expected_row
 
 
